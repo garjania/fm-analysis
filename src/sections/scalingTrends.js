@@ -24,7 +24,7 @@ export const scalingTrendsSection = {
     <path d="M2 12 L5 8 L8 9 L11 5 L14 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M2 14h12" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".4"/>
   </svg>`,
-  badge: '49 tasks',
+  badge: `${Object.values(SCALING_DATA).reduce((s, ys) => s + Object.keys(ys).length, 0)} tasks`,
 
   // ── Render ─────────────────────────────────────────────────────────────────
   render(container) {
@@ -37,12 +37,12 @@ export const scalingTrendsSection = {
   // ── Internal state ─────────────────────────────────────────────────────────
   _chart: null,
   _selected: new Set(),   // "xi:yi" strings
-  _xScale: 'linear',     // 'linear' | 'logarithmic'
+  _yScale: 'linear',     // 'linear' | 'logarithmic'
   _activeXFilter: null,  // null = show all, or an X_LABEL string
 
   _initState() {
     this._selected = new Set(DEFAULT_SELECTION.map(([xi, yi]) => `${xi}:${yi}`));
-    this._xScale = 'linear';
+    this._yScale = 'linear';
     this._activeXFilter = null;
   },
 
@@ -65,10 +65,13 @@ export const scalingTrendsSection = {
     // Update in place when possible — avoids canvas reuse issues and gives
     // smooth animations when toggling individual tasks.
     const scaleUnchanged = this._chart &&
-      this._chart.options.scales.x.type === this._xScale;
+      this._chart.options.scales.y.type === this._yScale;
 
     if (scaleUnchanged) {
       this._chart.data.datasets = datasets;
+      const { min, max } = this._yBounds(datasets, this._yScale);
+      this._chart.options.scales.y.min = min;
+      this._chart.options.scales.y.max = max;
       this._chart.update('active');
       this._renderLegend(datasets);
       this._updateStats(datasets);
@@ -99,7 +102,7 @@ export const scalingTrendsSection = {
         },
         scales: {
           x: {
-            type: this._xScale,
+            type: 'linear',
             title: {
               display: true,
               text: SCALE_AXIS_LABEL,
@@ -111,6 +114,7 @@ export const scalingTrendsSection = {
             ticks: { color: textColor, maxTicksLimit: 8 },
           },
           y: {
+            type: this._yScale,
             title: {
               display: true,
               text: METRIC_AXIS_LABEL,
@@ -120,8 +124,7 @@ export const scalingTrendsSection = {
             },
             grid: { color: gridColor },
             ticks: { color: textColor },
-            min: 0,
-            max: 100,
+            ...this._yBounds(datasets, this._yScale),
           },
         },
       },
@@ -129,6 +132,17 @@ export const scalingTrendsSection = {
 
     this._renderLegend(datasets);
     this._updateStats(datasets);
+  },
+
+  _yBounds(datasets, yScale = 'linear') {
+    const allY = datasets.flatMap(ds => ds.data.map(d => d.y));
+    const lo = Math.min(...allY);
+    const hi = Math.max(...allY);
+    if (yScale === 'logarithmic') {
+      return { min: lo * 0.9, max: hi * 1.1 };
+    }
+    const margin = Math.max((hi - lo) * 0.1, 0.1);
+    return { min: Math.max(0, lo - margin), max: hi + margin };
   },
 
   _buildDatasets() {
@@ -185,38 +199,40 @@ export const scalingTrendsSection = {
     const maxY = Math.max(...allY);
     const minY = Math.min(...allY);
 
-    // Best task = dataset with highest last point
+    const totalTasks = Object.values(SCALING_DATA).reduce((s, ys) => s + Object.keys(ys).length, 0);
+
+    // Best task = dataset with lowest loss at the last (largest) scale point
     const best = [...datasets].sort((a, b) => {
-      const lastA = a.data.at(-1)?.y ?? 0;
-      const lastB = b.data.at(-1)?.y ?? 0;
-      return lastB - lastA;
+      const lastA = a.data.at(-1)?.y ?? Infinity;
+      const lastB = b.data.at(-1)?.y ?? Infinity;
+      return lastA - lastB;
     })[0];
 
     el.innerHTML = `
       <div class="stat-chip">
         <div class="stat-label">Tasks shown</div>
         <div class="stat-value">${datasets.length}</div>
-        <div class="stat-sub">of 49 total</div>
+        <div class="stat-sub">of ${totalTasks} total</div>
       </div>
       <div class="stat-chip">
-        <div class="stat-label">Avg score</div>
-        <div class="stat-value">${avg.toFixed(1)}</div>
+        <div class="stat-label">Avg loss</div>
+        <div class="stat-value">${avg.toFixed(2)}</div>
         <div class="stat-sub">across all scales</div>
       </div>
       <div class="stat-chip">
-        <div class="stat-label">Peak score</div>
-        <div class="stat-value" style="color:var(--color-success)">${maxY.toFixed(1)}</div>
+        <div class="stat-label">Max loss</div>
+        <div class="stat-value" style="color:var(--color-danger)">${maxY.toFixed(2)}</div>
         <div class="stat-sub">max observed</div>
       </div>
       <div class="stat-chip">
-        <div class="stat-label">Min score</div>
-        <div class="stat-value" style="color:var(--color-danger)">${minY.toFixed(1)}</div>
+        <div class="stat-label">Min loss</div>
+        <div class="stat-value" style="color:var(--color-success)">${minY.toFixed(2)}</div>
         <div class="stat-sub">min observed</div>
       </div>
       <div class="stat-chip">
         <div class="stat-label">Best task</div>
         <div class="stat-value" style="font-size:13px;font-family:'Inter'">${best.label}</div>
-        <div class="stat-sub">highest at max scale</div>
+        <div class="stat-sub">lowest loss at max scale</div>
       </div>
     `;
   },
@@ -312,7 +328,7 @@ export const scalingTrendsSection = {
       btn.addEventListener('click', () => {
         container.querySelectorAll('.xscale-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        this._xScale = btn.dataset.scale;
+        this._yScale = btn.dataset.scale;
         this._rebuildChart();
       });
     });
@@ -350,8 +366,9 @@ function buildHTML() {
     <div class="section-hero">
       <h2>Scaling Trends</h2>
       <p>
-        Explore how performance scales with model size across all
-        <strong>49 cross-modal tasks</strong> (7 input × 7 output modalities).
+        Explore how cross-task loss scales with data size across
+        <strong>${Object.values(SCALING_DATA).reduce((s, ys) => s + Object.keys(ys).length, 0)} cross-modal tasks</strong>
+        (${X_LABELS.length} input × ${Y_LABELS.length} output modalities).
         Select any subset of tasks to compare their scaling curves.
       </p>
     </div>
@@ -381,7 +398,7 @@ function buildHTML() {
       <div class="chart-panel">
         <div class="chart-toolbar">
           <div class="chart-toolbar-left">
-            <span class="chart-title">Performance vs. Model Scale</span>
+            <span class="chart-title">Cross-Task Loss vs. Data Scale</span>
             <div class="btn-group">
               <button class="btn-group-item xscale-btn active" data-scale="linear">Linear</button>
               <button class="btn-group-item xscale-btn" data-scale="logarithmic">Log</button>
