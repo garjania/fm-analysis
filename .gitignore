@@ -1,0 +1,10 @@
+# Dependencies
+node_modules/
+
+# Build output (CI rebuilds this on every deploy)
+dist/
+
+# Local env / editor
+.env
+.env.local
+.DS_Store
