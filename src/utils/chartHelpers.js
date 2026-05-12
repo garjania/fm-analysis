@@ -76,7 +76,7 @@ export function tooltipPlugin(theme = 'dark') {
     callbacks: {
       title(items) {
         const xVal = items[0]?.parsed.x;
-        return `Scale: ${xVal}B params`;
+        return `${xVal}% of CC12M`;
       },
       label(ctx) {
         return `  ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}`;

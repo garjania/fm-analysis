@@ -15,7 +15,10 @@ for file in glob.glob(f"{DATA_PATH}/*/*.json"):
     with open(file, "r") as f:
         data = json.load(f)
     exp_name = file.split("/")[-2]
-    data_pct = int(exp_name.replace("pct", ""))
+    try:
+        data_pct = int(exp_name.replace("pct", ""))
+    except:
+        continue
     for key, value in data.items():
         match = re.match(REGEX, key)
         if match:
