@@ -10,6 +10,7 @@ import { makeDataset, tooltipPlugin, getCSSColor } from '../utils/chartHelpers.j
 import {
   X_LABELS, Y_LABELS, SCALING_DATA, PALETTE, SCALE_AXIS_LABEL, METRIC_AXIS_LABEL,
 } from '../data/scalingData.js';
+import { SCALING_DATA as SCALING_DATA_BASE } from '../data/scalingDataBase.js';
 
 // Default tasks shown on first load (x→y pairs as [xi, yi])
 const DEFAULT_SELECTION = [
@@ -36,14 +37,20 @@ export const scalingTrendsSection = {
 
   // ── Internal state ─────────────────────────────────────────────────────────
   _chart: null,
-  _selected: new Set(),   // "xi:yi" strings
-  _yScale: 'linear',     // 'linear' | 'logarithmic'
-  _activeXFilter: null,  // null = show all, or an X_LABEL string
+  _selected: new Set(),       // "xi:yi" strings
+  _yScale: 'linear',         // 'linear' | 'logarithmic'
+  _activeXFilter: null,      // null = show all, or an X_LABEL string
+  _activeModels: new Set(),  // 'small' | 'base'
+  _xMin: null,               // null = no lower bound
+  _xMax: null,               // null = no upper bound
 
   _initState() {
     this._selected = new Set(DEFAULT_SELECTION.map(([xi, yi]) => `${xi}:${yi}`));
     this._yScale = 'linear';
     this._activeXFilter = null;
+    this._activeModels = new Set(['small', 'base']);
+    this._xMin = null;
+    this._xMax = null;
   },
 
   // ── Chart (re)build ────────────────────────────────────────────────────────
@@ -65,13 +72,17 @@ export const scalingTrendsSection = {
     // Update in place when possible — avoids canvas reuse issues and gives
     // smooth animations when toggling individual tasks.
     const scaleUnchanged = this._chart &&
-      this._chart.options.scales.y.type === this._yScale;
+      this._chart.options.scales.y.type === this._yScale &&
+      this._chart.options.scales.x.type === this._yScale;
 
     if (scaleUnchanged) {
       this._chart.data.datasets = datasets;
-      const { min, max } = this._yBounds(datasets, this._yScale);
-      this._chart.options.scales.y.min = min;
-      this._chart.options.scales.y.max = max;
+      const { min: yMin, max: yMax } = this._yBounds(datasets, this._yScale);
+      this._chart.options.scales.y.min = yMin;
+      this._chart.options.scales.y.max = yMax;
+      const { min: xMin, max: xMax } = this._xBounds(datasets);
+      this._chart.options.scales.x.min = xMin;
+      this._chart.options.scales.x.max = xMax;
       this._chart.update('active');
       this._renderLegend(datasets);
       this._updateStats(datasets);
@@ -102,7 +113,7 @@ export const scalingTrendsSection = {
         },
         scales: {
           x: {
-            type: 'linear',
+            type: this._yScale,
             title: {
               display: true,
               text: SCALE_AXIS_LABEL,
@@ -112,6 +123,7 @@ export const scalingTrendsSection = {
             },
             grid: { color: gridColor },
             ticks: { color: textColor, maxTicksLimit: 8 },
+            ...this._xBounds(datasets),
           },
           y: {
             type: this._yScale,
@@ -145,21 +157,48 @@ export const scalingTrendsSection = {
     return { min: Math.max(0, lo - margin), max: hi + margin };
   },
 
+  _xBounds(datasets) {
+    const allX = datasets.flatMap(ds => ds.data.map(d => d.x));
+    if (allX.length === 0) return {};
+    const lo = this._xMin ?? Math.min(...allX);
+    const hi = this._xMax ?? Math.max(...allX);
+    return { min: lo, max: hi };
+  },
+
   _buildDatasets() {
+    const modelDefs = [
+      { key: 'small', data: SCALING_DATA,      dash: [6, 3] },
+      { key: 'base',  data: SCALING_DATA_BASE, dash: [] },
+    ].filter(m => this._activeModels.has(m.key));
+
+    const showModelSuffix = this._activeModels.size > 1;
     const datasets = [];
-    this._selected.forEach(key => {
-      const [xi, yi] = key.split(':').map(Number);
+
+    this._selected.forEach(selKey => {
+      const [xi, yi] = selKey.split(':').map(Number);
       const xLabel = X_LABELS[xi];
       const yLabel = Y_LABELS[yi];
-      const rawData = SCALING_DATA[xLabel]?.[yLabel];
-      if (!rawData) return;
-
       const color = PALETTE[yi % PALETTE.length];
-      datasets.push(makeDataset({
-        label: `${xLabel} → ${yLabel}`,
-        data: rawData.map(d => ({ x: d.x, y: d.y })),
-        color,
-      }));
+
+      modelDefs.forEach(({ key: modelKey, data, dash }) => {
+        const rawData = data[xLabel]?.[yLabel];
+        if (!rawData) return;
+        const suffix = showModelSuffix ? ` (${modelKey})` : '';
+        const xMin = this._xMin;
+        const xMax = this._xMax;
+        const points = rawData
+          .filter(d => (xMin === null || d.x >= xMin) && (xMax === null || d.x <= xMax))
+          .map(d => ({ x: d.x, y: d.y }));
+        if (points.length === 0) return;
+        const ds = makeDataset({
+          label: `${xLabel} → ${yLabel}${suffix}`,
+          data: points,
+          color,
+        });
+        if (dash.length) ds.borderDash = dash;
+        ds._model = modelKey;
+        datasets.push(ds);
+      });
     });
     return datasets;
   },
@@ -168,12 +207,20 @@ export const scalingTrendsSection = {
   _renderLegend(datasets) {
     const el = document.getElementById('scalingLegend');
     if (!el) return;
-    el.innerHTML = datasets.map((ds, i) => `
-      <div class="legend-item" data-index="${i}">
-        <div class="legend-swatch" style="background:${ds.borderColor}"></div>
-        <span>${ds.label}</span>
-      </div>
-    `).join('');
+    el.innerHTML = datasets.map((ds, i) => {
+      const dashes = ds._model === 'base' ? '5,3' : 'none';
+      const lineSvg = `<svg width="22" height="10" style="flex-shrink:0;vertical-align:middle">
+        <line x1="1" y1="5" x2="21" y2="5" stroke="${ds.borderColor}" stroke-width="2.5"
+          stroke-dasharray="${dashes}" stroke-linecap="round"/>
+        <circle cx="11" cy="5" r="2.5" fill="${ds.borderColor}"/>
+      </svg>`;
+      return `
+        <div class="legend-item" data-index="${i}">
+          ${lineSvg}
+          <span>${ds.label}</span>
+        </div>
+      `;
+    }).join('');
 
     el.querySelectorAll('.legend-item').forEach(item => {
       item.addEventListener('click', () => {
@@ -333,6 +380,37 @@ export const scalingTrendsSection = {
       });
     });
 
+    // Model toggle buttons (Small / Base) — independent, at least one must stay active
+    container.querySelectorAll('.model-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const model = btn.dataset.model;
+        if (this._activeModels.has(model)) {
+          if (this._activeModels.size > 1) {
+            this._activeModels.delete(model);
+            btn.classList.remove('active');
+          }
+        } else {
+          this._activeModels.add(model);
+          btn.classList.add('active');
+        }
+        this._rebuildChart();
+      });
+    });
+
+    // X range inputs
+    const parseRange = (val) => {
+      const n = parseFloat(val);
+      return (val === '' || isNaN(n)) ? null : n;
+    };
+    document.getElementById('xRangeMin')?.addEventListener('change', e => {
+      this._xMin = parseRange(e.target.value);
+      this._rebuildChart();
+    });
+    document.getElementById('xRangeMax')?.addEventListener('change', e => {
+      this._xMax = parseRange(e.target.value);
+      this._rebuildChart();
+    });
+
     // Download PNG
     document.getElementById('btnDownload')?.addEventListener('click', () => {
       if (!this._chart) return;
@@ -402,6 +480,16 @@ function buildHTML() {
             <div class="btn-group">
               <button class="btn-group-item xscale-btn active" data-scale="linear">Linear</button>
               <button class="btn-group-item xscale-btn" data-scale="logarithmic">Log</button>
+            </div>
+            <div class="btn-group" style="margin-left:8px">
+              <button class="btn-group-item model-btn active" data-model="small">Small</button>
+              <button class="btn-group-item model-btn active" data-model="base">Base</button>
+            </div>
+            <div class="x-range-group">
+              <span class="x-range-label">X range</span>
+              <input class="x-range-input" id="xRangeMin" type="number" min="1" max="100" step="1" placeholder="min">
+              <span class="x-range-sep">–</span>
+              <input class="x-range-input" id="xRangeMax" type="number" min="1" max="100" step="1" placeholder="max">
             </div>
           </div>
           <div>

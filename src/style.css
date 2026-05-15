@@ -563,6 +563,46 @@ body {
 }
 .btn-icon:hover { border-color: var(--color-accent); color: var(--color-accent); }
 
+.x-range-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  height: 28px;
+}
+
+.x-range-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text2);
+  white-space: nowrap;
+}
+
+.x-range-sep {
+  font-size: 11px;
+  color: var(--color-text2);
+}
+
+.x-range-input {
+  width: 48px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  outline: none;
+  text-align: center;
+  padding: 0;
+  -moz-appearance: textfield;
+}
+.x-range-input::-webkit-outer-spin-button,
+.x-range-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.x-range-input::placeholder { color: var(--color-text2); opacity: 0.6; }
+.x-range-input:focus { color: var(--color-accent); }
+
 .chart-area {
   padding: 20px 20px 12px;
 }

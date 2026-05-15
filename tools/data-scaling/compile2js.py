@@ -4,8 +4,8 @@ import re
 from collections import defaultdict
 
 
-DATA_PATH = "results"
-JS_PATH = "../../src/data/scalingData.js"
+DATA_PATH = "results-base"
+JS_PATH = "../../src/data/scalingDataBase.js"
 REGEX = r"\[X-Task Eval \(cc12m\)\] ([^-\s]+)->([^-\s]+)"
 
 # graph[pct][X][Y] = loss_value
