@@ -18,9 +18,11 @@
  */
 
 import { scalingTrendsSection } from './sections/scalingTrends.js';
+import { scalingFitsSection } from './sections/scalingFits.js';
 
 // ── Register sections in display order ──────────────────────────────────────
 export const SECTIONS = [
   scalingTrendsSection,
+  scalingFitsSection,
   // ← add more sections here
 ];
