@@ -43,6 +43,7 @@ export const scalingTrendsSection = {
   _activeModels: new Set(),  // 'small' | 'base'
   _xMin: null,               // null = no lower bound
   _xMax: null,               // null = no upper bound
+  _normalize: false,         // per-curve min-max normalization
 
   _initState() {
     this._selected = new Set(DEFAULT_SELECTION.map(([xi, yi]) => `${xi}:${yi}`));
@@ -51,6 +52,7 @@ export const scalingTrendsSection = {
     this._activeModels = new Set(['small', 'base']);
     this._xMin = null;
     this._xMax = null;
+    this._normalize = false;
   },
 
   // ── Chart (re)build ────────────────────────────────────────────────────────
@@ -129,7 +131,7 @@ export const scalingTrendsSection = {
             type: this._yScale,
             title: {
               display: true,
-              text: METRIC_AXIS_LABEL,
+              text: this._normalize ? 'Normalized Loss (0–1 per curve)' : METRIC_AXIS_LABEL,
               color: textColor,
               font: { size: 11, weight: '500' },
               padding: { bottom: 8 },
@@ -200,6 +202,19 @@ export const scalingTrendsSection = {
         datasets.push(ds);
       });
     });
+
+    if (this._normalize) {
+      datasets.forEach(ds => {
+        const ys = ds.data.map(d => d.y);
+        const lo = Math.min(...ys);
+        const hi = Math.max(...ys);
+        const range = hi - lo;
+        if (range > 0) {
+          ds.data = ds.data.map(d => ({ x: d.x, y: (d.y - lo) / range }));
+        }
+      });
+    }
+
     return datasets;
   },
 
@@ -397,6 +412,13 @@ export const scalingTrendsSection = {
       });
     });
 
+    // Normalize toggle
+    document.getElementById('btnNormalize')?.addEventListener('click', e => {
+      this._normalize = !this._normalize;
+      e.currentTarget.classList.toggle('active', this._normalize);
+      this._rebuildChart();
+    });
+
     // X range inputs
     const parseRange = (val) => {
       const n = parseFloat(val);
@@ -492,7 +514,15 @@ function buildHTML() {
               <input class="x-range-input" id="xRangeMax" type="number" min="1" max="100" step="1" placeholder="max">
             </div>
           </div>
-          <div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn-icon" id="btnNormalize">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <path d="M2 10 L5 5 L8 7 L11 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="2" y1="11.5" x2="11" y2="11.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".5"/>
+                <line x1="2" y1="1" x2="2" y2="11.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".5"/>
+              </svg>
+              Normalize
+            </button>
             <button class="btn-icon" id="btnDownload">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
                 <path d="M6.5 1v8M3.5 6.5l3 2.5 3-2.5M2 11h9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>

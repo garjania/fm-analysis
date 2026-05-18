@@ -562,6 +562,8 @@ body {
   transition: all var(--transition);
 }
 .btn-icon:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.btn-icon.active { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+.btn-icon.active:hover { opacity: 0.88; }
 
 .x-range-group {
   display: flex;
