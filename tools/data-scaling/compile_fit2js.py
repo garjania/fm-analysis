@@ -4,7 +4,7 @@ import re
 import os
 
 
-DATA_PATH = "results-base/fits"
+DATA_PATH = "results/fits"
 JS_PATH = "../../src/data/scalingFitsData.js"
 
 # 1% of CC12M = 5e9 tokens (derived from observed training scale)

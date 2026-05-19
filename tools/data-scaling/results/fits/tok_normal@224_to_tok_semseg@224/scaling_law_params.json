@@ -1,0 +1,19 @@
+{
+  "mode": "fixed_model_shifted",
+  "formula": "L(D) = E + B / (D + C)^beta",
+  "huber_loss": 2.38011649166143e-05,
+  "parameters": {
+    "E": 4.850236587050841,
+    "B": 47839.6034354966,
+    "beta": 0.45880041165424484,
+    "C": 967839397.822912
+  },
+  "data": "/mnt/vilab/scratch/ali/multimodal-datasets-project/fourm-df/tools/scaling_laws/results/4m-s_cc12m_mod7/csvs/tok_normal@224_to_tok_semseg@224.csv",
+  "fit_config": {
+    "grid_size": 100,
+    "delta": 0.001,
+    "seed": 42
+  },
+  "n_zero_tokens": 1,
+  "L_at_D_0": 8.456831113481055
+}

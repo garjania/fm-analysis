@@ -6,12 +6,14 @@
  */
 
 import Chart from 'chart.js/auto';
-import { makeDataset, tooltipPlugin, getCSSColor, hexToRgba } from '../utils/chartHelpers.js';
+import { tooltipPlugin, getCSSColor, hexToRgba } from '../utils/chartHelpers.js';
 import {
-  X_LABELS, Y_LABELS, FIT_PARAMS, PALETTE,
+  X_LABELS, Y_LABELS, FIT_PARAMS as FIT_PARAMS_BASE, PALETTE,
   N_TOKENS_PER_PCT, SCALE_AXIS_LABEL, METRIC_AXIS_LABEL,
-} from '../data/scalingFitsData.js';
-import { SCALING_DATA as ACTUAL_DATA } from '../data/scalingDataBase.js';
+} from '../data/scalingFitsDataBase.js';
+import { FIT_PARAMS as FIT_PARAMS_SMALL } from '../data/scalingFitsData.js';
+import { SCALING_DATA as ACTUAL_DATA_BASE } from '../data/scalingDataBase.js';
+import { SCALING_DATA as ACTUAL_DATA_SMALL } from '../data/scalingData.js';
 
 // Number of points sampled along the fitted curve
 const CURVE_POINTS = 200;
@@ -59,7 +61,7 @@ export const scalingFitsSection = {
     <circle cx="8" cy="6" r="1.5" fill="currentColor" opacity=".7"/>
     <circle cx="12" cy="3.5" r="1.5" fill="currentColor" opacity=".7"/>
   </svg>`,
-  badge: `${Object.values(FIT_PARAMS).reduce((s, ys) => s + Object.keys(ys).length, 0)} fits`,
+  badge: `${Object.values(FIT_PARAMS_BASE).reduce((s, ys) => s + Object.keys(ys).length, 0)} fits`,
 
   // ── Render ─────────────────────────────────────────────────────────────────
   render(container) {
@@ -79,6 +81,7 @@ export const scalingFitsSection = {
   _showActual: true,
   _extrapolate: false,
   _convergencePct: 90,
+  _activeModels: new Set(),
 
   _initState() {
     this._selected = new Set(DEFAULT_SELECTION.map(([xi, yi]) => `${xi}:${yi}`));
@@ -89,6 +92,7 @@ export const scalingFitsSection = {
     this._showActual = true;
     this._extrapolate = false;
     this._convergencePct = 90;
+    this._activeModels = new Set(['small', 'base']);
   },
 
   // ── Chart (re)build ────────────────────────────────────────────────────────
@@ -220,132 +224,152 @@ export const scalingFitsSection = {
   _buildDatasets() {
     const datasets = [];
     const maxPct = this._extrapolate ? 150 : 100;
+    const xMin = this._xMin;
+    const xMax = this._xMax;
+    const p = this._convergencePct / 100;
+
+    const modelDefs = [
+      { key: 'small', fitData: FIT_PARAMS_SMALL, actualData: ACTUAL_DATA_SMALL, dash: [6, 3] },
+      { key: 'base',  fitData: FIT_PARAMS_BASE,  actualData: ACTUAL_DATA_BASE,  dash: [] },
+    ].filter(m => this._activeModels.has(m.key));
+
+    const showModelSuffix = this._activeModels.size > 1;
 
     this._selected.forEach(selKey => {
       const [xi, yi] = selKey.split(':').map(Number);
       const xLabel = X_LABELS[xi];
       const yLabel = Y_LABELS[yi];
-      const params = FIT_PARAMS[xLabel]?.[yLabel];
-      if (!params) return;
-
       const color = PALETTE[yi % PALETTE.length];
       const taskLabel = `${xLabel} → ${yLabel}`;
-      const xMin = this._xMin;
-      const xMax = this._xMax;
 
-      // ── Fitted curve ──────────────────────────────────────────────────────
-      const curvePoints = fitCurvePoints(params, maxPct)
-        .filter(d => (xMin === null || d.x >= xMin) && (xMax === null || d.x <= xMax));
+      modelDefs.forEach(({ key: modelKey, fitData, actualData, dash }) => {
+        const params = fitData[xLabel]?.[yLabel];
+        if (!params) return;
 
-      if (curvePoints.length > 0) {
-        const ds = {
-          label: taskLabel,
-          _taskLabel: taskLabel,
-          _isActual: false,
-          _isELine: false,
-          data: curvePoints,
-          borderColor: color,
-          backgroundColor: hexToRgba(color, 0.06),
-          pointRadius: 0,
-          pointHoverRadius: 0,
-          borderWidth: 2,
-          tension: 0,
-          fill: false,
-        };
-        datasets.push(ds);
+        const suffix = showModelSuffix ? ` (${modelKey})` : '';
+        const fullLabel = `${taskLabel}${suffix}`;
 
-        // ── Asymptote E line (dash-dot) ──────────────────────────────────
-        const xStart = xMin ?? 0;
-        const xEnd = xMax ?? maxPct;
-        datasets.push({
-          label: `${taskLabel} (E = ${params.E.toFixed(3)})`,
-          _taskLabel: taskLabel,
-          _isActual: false,
-          _isELine: true,
-          _isConvergence: false,
-          data: [{ x: xStart, y: params.E }, { x: xEnd, y: params.E }],
-          borderColor: color,
-          backgroundColor: 'transparent',
-          pointRadius: 0,
-          pointHoverRadius: 0,
-          borderWidth: 1.5,
-          borderDash: [8, 4, 2, 4],
-          tension: 0,
-          fill: false,
-        });
+        // ── Fitted curve ────────────────────────────────────────────────────
+        const curvePoints = fitCurvePoints(params, maxPct)
+          .filter(d => (xMin === null || d.x >= xMin) && (xMax === null || d.x <= xMax));
 
-        // ── Convergence marker ────────────────────────────────────────────
-        const p = this._convergencePct / 100;
-        const dPct = convergenceDpct(params, p);
-        const inRange = isFinite(dPct) && dPct <= (xMax ?? maxPct) && dPct >= (xMin ?? 0);
-        if (inRange) {
-          const dTokens = dPct * N_TOKENS_PER_PCT;
-          const yAtD = evalFit(params, dTokens);
-          // Vertical drop line from asymptote E up to the curve at D%
-          datasets.push({
-            label: `${taskLabel} (conv. drop)`,
+        if (curvePoints.length > 0) {
+          const curveDs = {
+            label: fullLabel,
             _taskLabel: taskLabel,
+            _model: modelKey,
             _isActual: false,
             _isELine: false,
-            _isConvergence: true,
-            data: [{ x: dPct, y: params.E }, { x: dPct, y: yAtD }],
+            _isConvergence: false,
+            data: curvePoints,
+            borderColor: color,
+            backgroundColor: hexToRgba(color, 0.06),
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            borderWidth: 2,
+            tension: 0,
+            fill: false,
+          };
+          if (dash.length) curveDs.borderDash = dash;
+          datasets.push(curveDs);
+
+          // ── Asymptote E line (dash-dot) ──────────────────────────────────
+          const xStart = xMin ?? 0;
+          const xEnd = xMax ?? maxPct;
+          datasets.push({
+            label: `${fullLabel} (E = ${params.E.toFixed(3)})`,
+            _taskLabel: taskLabel,
+            _model: modelKey,
+            _isActual: false,
+            _isELine: true,
+            _isConvergence: false,
+            data: [{ x: xStart, y: params.E }, { x: xEnd, y: params.E }],
             borderColor: color,
             backgroundColor: 'transparent',
             pointRadius: 0,
             pointHoverRadius: 0,
-            borderWidth: 1,
-            borderDash: [3, 3],
+            borderWidth: modelKey === 'small' ? 1 : 1.5,
+            borderDash: [8, 4, 2, 4],
             tension: 0,
             fill: false,
           });
-          // Dot on the curve at the convergence point
-          datasets.push({
-            label: `${taskLabel} (conv. @ ${this._convergencePct}%)`,
-            _taskLabel: taskLabel,
-            _isActual: false,
-            _isELine: false,
-            _isConvergence: true,
-            data: [{ x: dPct, y: yAtD }],
-            borderColor: color,
-            backgroundColor: color,
-            pointBackgroundColor: color,
-            pointBorderColor: '#fff',
-            pointRadius: 6,
-            pointHoverRadius: 9,
-            pointBorderWidth: 2,
-            showLine: false,
-            fill: false,
-          });
-        }
-      }
 
-      // ── Actual data points overlay ────────────────────────────────────────
-      if (this._showActual) {
-        const rawData = ACTUAL_DATA[xLabel]?.[yLabel];
-        if (rawData) {
-          const actualPoints = rawData
-            .filter(d => (xMin === null || d.x >= xMin) && (xMax === null || d.x <= xMax))
-            .map(d => ({ x: d.x, y: d.y }));
-
-          if (actualPoints.length > 0) {
+          // ── Convergence markers ──────────────────────────────────────────
+          const dPct = convergenceDpct(params, p);
+          const inRange = isFinite(dPct) && dPct <= (xMax ?? maxPct) && dPct >= (xMin ?? 0);
+          if (inRange) {
+            const dTokens = dPct * N_TOKENS_PER_PCT;
+            const yAtD = evalFit(params, dTokens);
             datasets.push({
-              label: `${taskLabel} (actual)`,
+              label: `${fullLabel} (conv. drop)`,
               _taskLabel: taskLabel,
-              _isActual: true,
-              data: actualPoints,
+              _model: modelKey,
+              _isActual: false,
+              _isELine: false,
+              _isConvergence: true,
+              data: [{ x: dPct, y: params.E }, { x: dPct, y: yAtD }],
               borderColor: color,
-              backgroundColor: color,
-              pointBackgroundColor: '#fff',
+              backgroundColor: 'transparent',
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              borderWidth: 1,
+              borderDash: [3, 3],
+              tension: 0,
+              fill: false,
+            });
+            // Base: filled dot; Small: hollow dot (white fill, colored border)
+            datasets.push({
+              label: `${fullLabel} (conv. @ ${this._convergencePct}%)`,
+              _taskLabel: taskLabel,
+              _model: modelKey,
+              _isActual: false,
+              _isELine: false,
+              _isConvergence: true,
+              data: [{ x: dPct, y: yAtD }],
+              borderColor: color,
+              backgroundColor: modelKey === 'small' ? '#fff' : color,
+              pointBackgroundColor: modelKey === 'small' ? '#fff' : color,
               pointBorderColor: color,
-              pointRadius: 5,
-              pointHoverRadius: 8,
+              pointRadius: 6,
+              pointHoverRadius: 9,
               pointBorderWidth: 2,
               showLine: false,
               fill: false,
             });
           }
         }
-      }
+
+        // ── Actual data points overlay ───────────────────────────────────────
+        if (this._showActual) {
+          const rawData = actualData[xLabel]?.[yLabel];
+          if (rawData) {
+            const actualPoints = rawData
+              .filter(d => (xMin === null || d.x >= xMin) && (xMax === null || d.x <= xMax))
+              .map(d => ({ x: d.x, y: d.y }));
+            if (actualPoints.length > 0) {
+              datasets.push({
+                label: `${fullLabel} (actual)`,
+                _taskLabel: taskLabel,
+                _model: modelKey,
+                _isActual: true,
+                _isELine: false,
+                _isConvergence: false,
+                data: actualPoints,
+                borderColor: color,
+                backgroundColor: color,
+                // Base: filled; Small: hollow
+                pointBackgroundColor: modelKey === 'small' ? '#fff' : color,
+                pointBorderColor: color,
+                pointRadius: 5,
+                pointHoverRadius: 8,
+                pointBorderWidth: 2,
+                showLine: false,
+                fill: false,
+              });
+            }
+          }
+        }
+      });
     });
 
     return datasets;
@@ -356,45 +380,49 @@ export const scalingFitsSection = {
     const el = document.getElementById('fitsLegend');
     if (!el) return;
 
-    // Deduplicate by task; skip E-line and convergence datasets (not in legend)
+    // One entry per task×model; skip E-line and convergence datasets
     const seen = new Set();
     const entries = [];
     datasets.forEach((ds, i) => {
-      if (ds._isELine || ds._isConvergence) return;
-      const key = ds._taskLabel;
+      if (ds._isELine || ds._isConvergence || ds._isActual) return;
+      const key = `${ds._taskLabel}::${ds._model}`;
       if (!seen.has(key)) {
         seen.add(key);
         entries.push({ ds, i });
       }
     });
 
-    el.innerHTML = entries.map(({ ds, i }) => {
+    el.innerHTML = entries.map(({ ds }) => {
+      const dashes = ds._model === 'small' ? '6,3' : 'none';
+      const lineSvg = `<svg width="22" height="10" style="flex-shrink:0;vertical-align:middle">
+        <line x1="1" y1="5" x2="21" y2="5" stroke="${ds.borderColor}" stroke-width="2.5"
+          stroke-dasharray="${dashes}" stroke-linecap="round"/>
+        <circle cx="11" cy="5" r="2.5" fill="${ds.borderColor}"
+          stroke="${ds._model === 'small' ? ds.borderColor : 'none'}"
+          fill="${ds._model === 'small' ? '#fff' : ds.borderColor}"/>
+      </svg>`;
       return `
-        <div class="legend-item" data-label="${ds._taskLabel}">
-          <svg width="22" height="10" style="flex-shrink:0;vertical-align:middle">
-            <line x1="1" y1="5" x2="21" y2="5" stroke="${ds.borderColor}" stroke-width="2.5"
-              stroke-linecap="round"/>
-            <circle cx="11" cy="5" r="2.5" fill="${ds.borderColor}"/>
-          </svg>
-          <span>${ds._taskLabel}</span>
+        <div class="legend-item" data-task="${ds._taskLabel}" data-model="${ds._model}">
+          ${lineSvg}
+          <span>${ds.label}</span>
         </div>
       `;
     }).join('');
 
     el.querySelectorAll('.legend-item').forEach(item => {
       item.addEventListener('click', () => {
-        const label = item.dataset.label;
+        const task = item.dataset.task;
+        const model = item.dataset.model;
         const chart = this._chart;
         if (!chart) return;
-        // Determine new hidden state from the primary (non-E-line) curve
         const primaryIdx = chart.data.datasets.findIndex(
-          ds => ds._taskLabel === label && !ds._isELine && !ds._isActual
+          ds => ds._taskLabel === task && ds._model === model &&
+                !ds._isELine && !ds._isActual && !ds._isConvergence
         );
         if (primaryIdx < 0) return;
         const newHidden = !chart.getDatasetMeta(primaryIdx).hidden;
-        // Apply to all datasets for this task (curve, E-line, convergence markers)
         chart.data.datasets.forEach((ds, idx) => {
-          if (ds._taskLabel === label) {
+          if (ds._taskLabel === task && ds._model === model) {
             chart.getDatasetMeta(idx).hidden = newHidden;
           }
         });
@@ -413,17 +441,19 @@ export const scalingFitsSection = {
     const curveDsets = datasets.filter(ds => !ds._isActual && !ds._isELine && !ds._isConvergence);
     if (curveDsets.length === 0) { el.innerHTML = ''; return; }
 
-    const totalFits = Object.values(FIT_PARAMS).reduce((s, ys) => s + Object.keys(ys).length, 0);
+    const totalFits = Object.values(FIT_PARAMS_BASE).reduce((s, ys) => s + Object.keys(ys).length, 0);
     const selectedTasks = new Set(curveDsets.map(ds => ds._taskLabel)).size;
 
-    // Asymptotic loss E for each fitted task
-    const taskKeys = [...new Set(curveDsets.map(ds => ds._taskLabel))];
-    const asymptotics = taskKeys.map(label => {
-      const [xLabel, yLabel] = label.split(' → ');
-      return { label, E: FIT_PARAMS[xLabel]?.[yLabel]?.E ?? Infinity };
-    });
-    const bestAsymptotic = asymptotics.sort((a, b) => a.E - b.E)[0];
-    const avgE = asymptotics.reduce((s, t) => s + t.E, 0) / asymptotics.length;
+    // E values read from E-line datasets to support multiple models
+    const eLineDsets = datasets.filter(ds => ds._isELine);
+    const asymptotics = eLineDsets.map(ds => ({
+      label: ds._taskLabel + (this._activeModels.size > 1 ? ` (${ds._model})` : ''),
+      E: ds.data[0].y,
+    }));
+    const bestAsymptotic = [...asymptotics].sort((a, b) => a.E - b.E)[0] ?? { label: '—', E: 0 };
+    const avgE = asymptotics.length
+      ? asymptotics.reduce((s, t) => s + t.E, 0) / asymptotics.length
+      : 0;
 
     // Loss at 100% scale per fit
     const lossAt100 = curveDsets.map(ds => ds.data.at(-1)?.y ?? Infinity);
@@ -480,14 +510,17 @@ export const scalingFitsSection = {
       return;
     }
 
+    const showModelCol = this._activeModels.size > 1;
+
     const rows = curveDsets.map(ds => {
       const [xLabel, yLabel] = ds._taskLabel.split(' → ');
-      const params = FIT_PARAMS[xLabel]?.[yLabel];
+      const fitData = ds._model === 'small' ? FIT_PARAMS_SMALL : FIT_PARAMS_BASE;
+      const params = fitData[xLabel]?.[yLabel];
       if (!params) return null;
       const dPct = convergenceDpct(params, p);
       const dTokens = isFinite(dPct) ? dPct * N_TOKENS_PER_PCT : Infinity;
       const lossAtD = isFinite(dPct) ? evalFit(params, dTokens) : params.E;
-      return { taskLabel: ds._taskLabel, color: ds.borderColor, params, dPct, lossAtD };
+      return { taskLabel: ds._taskLabel, model: ds._model, color: ds.borderColor, params, dPct, lossAtD };
     }).filter(Boolean);
 
     rows.sort((a, b) => {
@@ -513,6 +546,7 @@ export const scalingFitsSection = {
             <thead>
               <tr style="color:var(--color-text2);border-bottom:1px solid var(--color-border)">
                 <th style="text-align:left;padding:5px 10px 5px 0;font-weight:500">Task (X→Y)</th>
+                ${showModelCol ? '<th style="text-align:center;padding:5px 8px;font-weight:500">Model</th>' : ''}
                 <th style="text-align:right;padding:5px 8px;font-weight:500">β</th>
                 <th style="text-align:right;padding:5px 8px;font-weight:500">E (asymptote)</th>
                 <th style="text-align:right;padding:5px 8px;font-weight:500">D% of CC12M</th>
@@ -524,11 +558,20 @@ export const scalingFitsSection = {
               ${rows.map((r, i) => `
                 <tr style="border-bottom:1px solid var(--color-border);
                            background:${i % 2 === 0 ? 'transparent' : 'color-mix(in srgb, var(--color-border) 30%, transparent)'}">
-                  <td style="padding:6px 10px 6px 0;display:flex;align-items:center;gap:7px">
-                    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-                                 background:${r.color};flex-shrink:0"></span>
-                    <span style="font-family:'JetBrains Mono',monospace;font-size:11px">${r.taskLabel}</span>
+                  <td style="padding:6px 10px 6px 0">
+                    <div style="display:flex;align-items:center;gap:7px">
+                      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                                   background:${r.model === 'small' ? 'transparent' : r.color};
+                                   border:2px solid ${r.color};flex-shrink:0"></span>
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:11px">${r.taskLabel}</span>
+                    </div>
                   </td>
+                  ${showModelCol ? `
+                  <td style="text-align:center;padding:6px 8px">
+                    <span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;
+                                 background:color-mix(in srgb,${r.color} 15%,transparent);
+                                 color:${r.color}">${r.model}</span>
+                  </td>` : ''}
                   <td style="text-align:right;padding:6px 8px;font-family:'JetBrains Mono',monospace;color:var(--color-text2)">
                     ${r.params.beta.toFixed(3)}
                   </td>
@@ -566,8 +609,8 @@ export const scalingFitsSection = {
         <div class="task-group-label">${xLabel} →</div>
         <div class="task-chips">
           ${Y_LABELS.map((yLabel, yi) => {
-            // Only render chip if fit exists
-            if (!FIT_PARAMS[xLabel]?.[yLabel]) return '';
+            // Only render chip if fit exists in either model
+            if (!FIT_PARAMS_BASE[xLabel]?.[yLabel] && !FIT_PARAMS_SMALL[xLabel]?.[yLabel]) return '';
             const key = `${xi}:${yi}`;
             const selected = this._selected.has(key);
             const color = PALETTE[yi % PALETTE.length];
@@ -619,7 +662,7 @@ export const scalingFitsSection = {
       xLabels.forEach(xLabel => {
         const xi = X_LABELS.indexOf(xLabel);
         Y_LABELS.forEach((yLabel, yi) => {
-          if (FIT_PARAMS[xLabel]?.[yLabel]) this._selected.add(`${xi}:${yi}`);
+          if (FIT_PARAMS_BASE[xLabel]?.[yLabel] || FIT_PARAMS_SMALL[xLabel]?.[yLabel]) this._selected.add(`${xi}:${yi}`);
         });
       });
       this._renderChips(this._activeXFilter);
@@ -674,6 +717,23 @@ export const scalingFitsSection = {
       this._rebuildChart();
     });
 
+    // Model toggle (Small / Base) — at least one must stay active
+    container.querySelectorAll('.fits-model-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const model = btn.dataset.model;
+        if (this._activeModels.has(model)) {
+          if (this._activeModels.size > 1) {
+            this._activeModels.delete(model);
+            btn.classList.remove('active');
+          }
+        } else {
+          this._activeModels.add(model);
+          btn.classList.add('active');
+        }
+        this._rebuildChart();
+      });
+    });
+
     // Convergence slider
     const slider = document.getElementById('fitsConvergenceSlider');
     const sliderVal = document.getElementById('fitsConvergenceVal');
@@ -695,23 +755,31 @@ export const scalingFitsSection = {
     // Export convergence table as JSON
     document.getElementById('fitsExportJson')?.addEventListener('click', () => {
       const p = this._convergencePct / 100;
+      const modelDefs = [
+        { key: 'small', fitData: FIT_PARAMS_SMALL },
+        { key: 'base',  fitData: FIT_PARAMS_BASE },
+      ].filter(m => this._activeModels.has(m.key));
+
       const tasks = [];
       this._selected.forEach(selKey => {
         const [xi, yi] = selKey.split(':').map(Number);
         const xLabel = X_LABELS[xi];
         const yLabel = Y_LABELS[yi];
-        const params = FIT_PARAMS[xLabel]?.[yLabel];
-        if (!params) return;
-        const dPct = convergenceDpct(params, p);
-        const dTokens = isFinite(dPct) ? dPct * N_TOKENS_PER_PCT : null;
-        tasks.push({
-          task: `${xLabel} → ${yLabel}`,
-          x: xLabel,
-          y: yLabel,
-          params: { E: params.E, B: params.B, beta: params.beta, C: params.C },
-          convergence_d_pct: isFinite(dPct) ? dPct : null,
-          convergence_d_tokens: dTokens,
-          loss_at_convergence: dTokens !== null ? evalFit(params, dTokens) : params.E,
+        modelDefs.forEach(({ key: modelKey, fitData }) => {
+          const params = fitData[xLabel]?.[yLabel];
+          if (!params) return;
+          const dPct = convergenceDpct(params, p);
+          const dTokens = isFinite(dPct) ? dPct * N_TOKENS_PER_PCT : null;
+          tasks.push({
+            task: `${xLabel} → ${yLabel}`,
+            model: modelKey,
+            x: xLabel,
+            y: yLabel,
+            params: { E: params.E, B: params.B, beta: params.beta, C: params.C },
+            convergence_d_pct: isFinite(dPct) ? dPct : null,
+            convergence_d_tokens: dTokens,
+            loss_at_convergence: dTokens !== null ? evalFit(params, dTokens) : params.E,
+          });
         });
       });
       tasks.sort((a, b) => {
@@ -721,6 +789,7 @@ export const scalingFitsSection = {
       });
       const payload = {
         convergence_target_pct: this._convergencePct,
+        models: [...this._activeModels],
         formula: 'L(D) = E + B / (D + C)^beta',
         n_tokens_per_pct: N_TOKENS_PER_PCT,
         tasks,
@@ -746,7 +815,7 @@ export const scalingFitsSection = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 function buildHTML() {
-  const totalFits = Object.values(FIT_PARAMS).reduce((s, ys) => s + Object.keys(ys).length, 0);
+  const totalFits = Object.values(FIT_PARAMS_BASE).reduce((s, ys) => s + Object.keys(ys).length, 0);
 
   const xTabsHtml = ['All', ...X_LABELS].map((label, i) => `
     <button class="axis-tab ${i === 0 ? 'active' : ''}" data-x="${i === 0 ? '' : label}">
@@ -795,6 +864,10 @@ function buildHTML() {
               <div class="btn-group">
                 <button class="btn-group-item xscale-btn active" data-scale="linear">Linear</button>
                 <button class="btn-group-item xscale-btn" data-scale="logarithmic">Log</button>
+              </div>
+              <div class="btn-group" style="margin-left:8px">
+                <button class="btn-group-item fits-model-btn active" data-model="small">Small</button>
+                <button class="btn-group-item fits-model-btn active" data-model="base">Base</button>
               </div>
               <div class="x-range-group">
                 <span class="x-range-label">X range</span>
